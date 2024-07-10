@@ -36,10 +36,18 @@ import numpy as np
 import torch
 
 import omni.isaac.core.utils.prims as prim_utils
+from omni.isaac.core.utils.extensions import enable_extension
 
 import omni.isaac.lab.sim as sim_utils
 from omni.isaac.lab.assets import Articulation
 from omni.isaac.lab.utils.assets import ISAAC_NUCLEUS_DIR
+# from omni.isaac.robot_assembler import RobotAssembler,AssembledRobot
+
+
+# enable ROS bridge extension
+enable_extension("omni.isaac.ros_bridge")
+simulation_app.update()
+
 
 ##
 # Pre-defined configs

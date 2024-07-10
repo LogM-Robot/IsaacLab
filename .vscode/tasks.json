@@ -12,6 +12,7 @@
             }
         },
         {
+            
             // run formatter
             "label": "run_formatter",
             "type": "shell",

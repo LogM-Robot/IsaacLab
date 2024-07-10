@@ -43,11 +43,11 @@ parser.add_argument(
     default=False,
     help="Consolidate links that are connected by fixed joints.",
 )
-parser.add_argument("--fix-base", action="store_true", default=False, help="Fix the base to where it is imported.")
+parser.add_argument("--fix-base", action="store_true", default=True, help="Fix the base to where it is imported.")
 parser.add_argument(
     "--make-instanceable",
     action="store_true",
-    default=False,
+    default=True,
     help="Make the asset instanceable for efficient cloning.",
 )
 # append AppLauncher cli args
@@ -94,6 +94,9 @@ def main():
         merge_fixed_joints=args_cli.merge_joints,
         force_usd_conversion=True,
         make_instanceable=args_cli.make_instanceable,
+        self_collision=True, 
+        convex_decompose_mesh=True, 
+        import_inertia_tensor=True,
     )
 
     # Print info
