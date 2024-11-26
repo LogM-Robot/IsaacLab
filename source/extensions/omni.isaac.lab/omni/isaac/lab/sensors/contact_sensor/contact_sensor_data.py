@@ -65,6 +65,33 @@ class ContactSensorData:
         If the :attr:`ContactSensorCfg.filter_prim_paths_expr` is empty, then this quantity is None.
     """
 
+    normal_forces_matrix: torch.Tensor | None = None
+    """The normal contact forces filtered between the sensor bodies and filtered bodies.
+    Shape is (N, B, M, ), where N is the number of sensors, B is number of bodies in each sensor
+    and ``M`` is the number of filtered bodies.
+    Note:
+        If the :attr:`ContactSensorCfg.filter_prim_paths_expr` is empty, then this quantity is None.
+    """
+    
+    contact_locations_w: torch.Tensor | None = None
+    """The contact locations filtered in world frame.
+
+    Shape is (N, B, M, 3), where N is the number of sensors, B is number of bodies in each sensor
+    and ``M`` is the number of filtered bodies.
+    Note:
+        If the :attr:`ContactSensorCfg.filter_prim_paths_expr` is empty, then this quantity is None.
+    """
+
+    contact_normals_w: torch.Tensor | None = None
+    """The contact normals filtered in world frame.
+
+    Shape is (N, B, M, 3), where N is the number of sensors, B is number of bodies in each sensor
+    and ``M`` is the number of filtered bodies.
+    Note:
+        If the :attr:`ContactSensorCfg.filter_prim_paths_expr` is empty, then this quantity is None.
+    """
+
+    
     last_air_time: torch.Tensor | None = None
     """Time spent (in s) in the air before the last contact.
 
