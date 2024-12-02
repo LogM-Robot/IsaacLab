@@ -147,6 +147,9 @@ class ContactSensor(SensorBase):
         # reset force matrix
         if len(self.cfg.filter_prim_paths_expr) != 0:
             self._data.force_matrix_w[env_ids] = 0.0
+            self._data.normal_forces_matrix[env_ids] = 0.0
+            self._data.contact_locations_w[env_ids] = torch.nan
+            self._data.contact_normals_w[env_ids] = torch.nan
         # reset the current air time
         if self.cfg.track_air_time:
             self._data.current_air_time[env_ids] = 0.0
@@ -272,7 +275,8 @@ class ContactSensor(SensorBase):
         # create a rigid prim view for the sensor
         self._body_physx_view = self._physics_sim_view.create_rigid_body_view(body_names_glob)
         self._contact_physx_view = self._physics_sim_view.create_rigid_contact_view(
-            body_names_glob, filter_patterns=filter_prim_paths_glob
+            body_names_glob, filter_patterns=filter_prim_paths_glob, 
+            max_contact_data_count=8388608 # 8*1024*1024
         )
         # resolve the true count of bodies
         self._num_bodies = self.body_physx_view.count // self._num_envs
@@ -310,7 +314,59 @@ class ContactSensor(SensorBase):
             self._data.force_matrix_w = torch.zeros(
                 self._num_envs, self._num_bodies, num_filters, 3, device=self._device
             )
+            self._data.normal_forces_matrix = torch.zeros(
+                self._num_envs, self._num_bodies, num_filters, device=self._device
+            )
+            self._data.contact_locations_w = torch.full(
+                (self._num_envs, self._num_bodies, num_filters, 3), torch.nan, device=self._device
+            )
+            self._data.contact_normals_w = torch.full(
+                (self._num_envs, self._num_bodies, num_filters, 3), torch.nan, device=self._device
+            )
+    
+    def _compute_contact_info_from_buffer(self):
+        """Returns the contact locations from the buffer."""
+        
+        force_buffer, point_buffer, normal_buffer, _, contact_count_buffer, start_indices_buffer = \
+            self.contact_physx_view.get_contact_data(dt=self._sim_physics_dt)
+        # ts = time.time()
+        contact_count_buffer = contact_count_buffer.view(-1)   # (N*B,)
+        start_indices_buffer = start_indices_buffer.view(-1)   # (N*B,)
+        contact_fn_buf = self._data.normal_forces_matrix.clone().view(-1, 1)  # (N*B,)
+        contact_locs_buf = self._data.contact_locations_w.clone().view(-1, 3)
+        contact_normals_buf = self._data.contact_normals_w.clone().view(-1, 3)
+        contact_fn_buf[:] = 0.0
+        contact_locs_buf[:] = torch.nan
+        contact_normals_buf[:] = torch.nan
 
+        mask = contact_count_buffer > 0
+        masked_indices = mask.nonzero(as_tuple=True)[0]
+        if masked_indices.numel() > 0:
+            # Precomputing indices for all contacts
+            indices = torch.repeat_interleave(masked_indices, contact_count_buffer[masked_indices])  # (num_contacts,)
+
+            # Gather loc_buf and force_buf based on computed indices
+            loc_buf = point_buffer[:(start_indices_buffer[masked_indices][-1] + contact_count_buffer[masked_indices][-1])]
+            normal_buf = normal_buffer[:(start_indices_buffer[masked_indices][-1] + contact_count_buffer[masked_indices][-1])]
+            force_buf = force_buffer[:(start_indices_buffer[masked_indices][-1] + contact_count_buffer[masked_indices][-1])]
+
+            # Calculate weighted average locations per masked index
+            weighted_loc_sum = torch.zeros_like(contact_locs_buf)
+            weighted_normal_sum = torch.zeros_like(contact_normals_buf)
+            # force_sum = torch.zeros_like(contact_count_buffer, dtype=force_buf.dtype)
+            force_sum = torch.zeros_like(contact_fn_buf)
+
+            weighted_loc_sum.index_add_(0, indices, loc_buf * force_buf)
+            weighted_normal_sum.index_add_(0, indices, normal_buf * force_buf)
+            # force_sum.index_add_(0, indices, force_buf.sum(dim=1))
+            force_sum.index_add_(0, indices, force_buf)
+
+            contact_locs_buf[masked_indices] = weighted_loc_sum[masked_indices] / force_sum[masked_indices]#.unsqueeze(1)
+            contact_normals_buf[masked_indices] = weighted_normal_sum[masked_indices] / force_sum[masked_indices]#.unsqueeze(1)
+            contact_fn_buf[masked_indices] = force_sum[masked_indices]
+        
+        return contact_fn_buf, contact_locs_buf, contact_normals_buf
+    
     def _update_buffers_impl(self, env_ids: Sequence[int]):
         """Fills the buffers of the sensor data."""
         # default to all sensors
@@ -333,8 +389,16 @@ class ContactSensor(SensorBase):
             num_filters = self.contact_physx_view.filter_count
             # acquire and shape the force matrix
             force_matrix_w = self.contact_physx_view.get_contact_force_matrix(dt=self._sim_physics_dt)
-            force_matrix_w = force_matrix_w.view(-1, self._num_bodies, num_filters, 3)
+            force_matrix_w = force_matrix_w.view(self._num_envs, self._num_bodies, num_filters, 3)
             self._data.force_matrix_w[env_ids] = force_matrix_w[env_ids]
+            # acquire and shape the contact normal forces, locations & normals
+            normal_force_matrix, location_matrix_w, normal_matrix_w = self._compute_contact_info_from_buffer()
+            normal_force_matrix = normal_force_matrix.view(self._num_envs, self._num_bodies, num_filters)
+            location_matrix_w = location_matrix_w.view(self._num_envs, self._num_bodies, num_filters, 3)
+            normal_matrix_w = normal_matrix_w.view(self._num_envs, self._num_bodies, num_filters, 3)
+            self._data.normal_forces_matrix[env_ids] = normal_force_matrix[env_ids]
+            self._data.contact_locations_w[env_ids] = location_matrix_w[env_ids]
+            self._data.contact_normals_w[env_ids] = normal_matrix_w[env_ids]
 
         # obtain the pose of the sensor origin
         if self.cfg.track_pose:
